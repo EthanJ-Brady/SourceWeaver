@@ -3,6 +3,7 @@ use clap::Parser;
 use content_inspector::ContentType;
 use ignore::WalkBuilder;
 use std::{
+    collections::HashSet,
     fs::{self, File},
     io::{self, BufWriter, Write},
     path::{Path, PathBuf},
@@ -24,6 +25,19 @@ struct Args {
     hidden: bool,
 }
 
+// Define common lock file names
+const LOCK_FILES: &[&str] = &[
+    "Cargo.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "poetry.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "Pipfile.lock",
+    "go.sum",
+    "flake.lock",
+];
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
@@ -34,7 +48,6 @@ fn main() -> io::Result<()> {
     println!("Scanning directory: {}", root_dir.display());
     println!("Outputting to: {}", args.output.display());
 
-    // --- Bug Fix Start ---
     // Ensure parent directory for output exists before canonicalizing
     if let Some(parent) = args.output.parent() {
         if !parent.exists() {
@@ -43,27 +56,29 @@ fn main() -> io::Result<()> {
     }
 
     // Create the output file *first* so we can canonicalize its path
-    let output_file = File::create(&args.output)?;
+    // Use a block to ensure the file handle is closed before canonicalization
+    {
+        let _ = File::create(&args.output)?;
+    }
 
     // Get the canonical (absolute, symlinks resolved) path of the output file
-    // This is crucial for accurate comparison during the walk.
     let canonical_output_path = match fs::canonicalize(&args.output) {
         Ok(path) => Some(path),
         Err(e) => {
-            // If we can't canonicalize (e.g., permissions, weird paths),
-            // warn the user and proceed without filtering. The file *might*
-            // still be included if it's inside the scanned directory.
             eprintln!(
                 "Warning: Could not canonicalize output path {}: {}. It might be included if inside the scanned directory.",
                 args.output.display(),
                 e
             );
-            None // Proceed without filtering
+            None
         }
     };
-    // --- Bug Fix End ---
 
-    let mut writer = BufWriter::new(output_file);
+    // Create a HashSet for efficient lock file checking
+    let lock_file_set: HashSet<&str> = LOCK_FILES.iter().cloned().collect();
+
+    let output_file_handle = File::create(&args.output)?; // Re-open for writing
+    let mut writer = BufWriter::new(output_file_handle);
 
     // Use WalkBuilder to respect .gitignore, .ignore, etc.
     let walker = WalkBuilder::new(&root_dir)
@@ -73,42 +88,45 @@ fn main() -> io::Result<()> {
         .git_global(true)
         .git_exclude(true)
         .ignore(true)
-        // --- Bug Fix Start ---
-        // Add a filter predicate to explicitly ignore the output file
+        // Add a filter predicate to explicitly ignore the output file and lock files
         .filter_entry(move |entry| {
-            // If we determined the canonical output path earlier, use it for filtering
+            // --- Filter 1: Output File ---
             if let Some(output_path_to_check) = &canonical_output_path {
-                // Try to canonicalize the entry's path for reliable comparison
-                // If canonicalization fails for the entry (e.g., broken symlink),
-                // we default to NOT filtering it (return true).
-                match fs::canonicalize(entry.path()) {
-                    Ok(entry_path_canonical) => {
-                        // Filter out (return false) if the entry's canonical path
-                        // matches the output file's canonical path.
-                        entry_path_canonical != *output_path_to_check
+                // Attempt canonicalization for comparison, proceed if it fails
+                if let Ok(entry_path_canonical) = fs::canonicalize(entry.path()) {
+                    if entry_path_canonical == *output_path_to_check {
+                        return false; // Skip output file
                     }
-                    Err(_) => true, // Don't filter if canonicalization fails
                 }
-            } else {
-                // If we couldn't get the canonical output path initially,
-                // don't filter any entries based on it.
-                true
+                // If canonicalization fails, don't skip based on this check
             }
+
+            // --- Filter 2: Lock Files ---
+            // Check only if it's a file to avoid matching directory names
+            if entry.file_type().map_or(false, |ft| ft.is_file()) {
+                // Check if the filename exists in our lock file set
+                if let Some(file_name) = entry.file_name().to_str() {
+                    if lock_file_set.contains(file_name) {
+                        return false; // Skip lock file
+                    }
+                }
+            }
+
+            // --- Default: Include ---
+            // If neither filter matched, include the entry
+            true
         })
-        // --- Bug Fix End ---
-        .build(); // Don't use build_parallel() to maintain order
+        .build();
 
     for result in walker {
         match result {
             Ok(entry) => {
                 let path = entry.path();
-                // Skip the root directory itself if it happens to be yielded
                 if path == root_dir {
                     continue;
-                }
+                } // Skip root dir itself
                 if path.is_file() {
                     if let Ok(relative_path) = path.strip_prefix(&root_dir) {
-                        // Skip empty relative paths (shouldn't happen often)
                         if relative_path.as_os_str().is_empty() {
                             continue;
                         }
@@ -118,7 +136,6 @@ fn main() -> io::Result<()> {
                             "Warning: Could not get relative path for {}",
                             path.display()
                         );
-                        // Avoid processing if we can't get a relative path
                     }
                 }
             }
@@ -130,6 +147,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
+// process_file and get_language_tag functions remain unchanged
 fn process_file<W: Write>(
     writer: &mut W,
     relative_path: &Path,
@@ -147,11 +165,9 @@ fn process_file<W: Write>(
                 let content_str = String::from_utf8_lossy(&content);
                 let lang = get_language_tag(relative_path);
                 writeln!(writer, "```{}", lang)?;
-                // Ensure consistent line endings (Unix-style) in output
                 for line in content_str.lines() {
                     writeln!(writer, "{}", line)?;
                 }
-                // writeln!(writer, "{}", content_str.trim_end())?; // Alternative: trim trailing newline
                 writeln!(writer, "```")?;
             }
         }
@@ -167,7 +183,6 @@ fn process_file<W: Write>(
     Ok(())
 }
 
-// Basic language detection based on file extension (no changes needed here)
 fn get_language_tag(path: &Path) -> &str {
     path.extension()
         .and_then(|ext| ext.to_str())
