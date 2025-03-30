@@ -19,7 +19,7 @@ Source Weaver is a command-line tool that scans a codebase directory, respects `
 1.  **Install Rust:** If you haven't already, install Rust via [rustup](https://rustup.rs/).
 2.  **Clone the repository (Optional):**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/EthanJ-Brady/SourceWeaver
     cd sourceweaver
     ```
 3.  **Install:**
@@ -27,9 +27,9 @@ Source Weaver is a command-line tool that scans a codebase directory, respects `
       ```bash
       cargo install --path .
       ```
-    - Directly from a Git repository (replace `<repository-url>`):
+    - Directly from a Git repository:
       ```bash
-      cargo install --git <repository-url> sourceweaver
+      cargo install --git https://github.com/EthanJ-Brady/SourceWeaver sourceweaver
       ```
 
 After installation, the `sourceweaver` binary should be available in your Cargo bin path (`~/.cargo/bin/` by default).
@@ -43,9 +43,9 @@ After installation, the `sourceweaver` binary should be available in your Cargo 
       # Navigate to the sourceweaver directory
       nix run .# -- --help
       ```
-    - Directly from a Git repository (replace `<repository-url>`):
+    - Directly from a Git repository:
       ```bash
-      nix run <repository-url> -- --help
+      nix run github:EthanJ-Brady/SourceWeaver -- --help
       ```
 3.  **Install to Profile:**
     - From a local clone:
@@ -53,9 +53,9 @@ After installation, the `sourceweaver` binary should be available in your Cargo 
       # Navigate to the sourceweaver directory
       nix profile install .#
       ```
-    - Directly from a Git repository (replace `<repository-url>`):
+    - Directly from a Git repository:
       ```bash
-      nix profile install <repository-url>
+      nix profile install github:EthanJ-Brady/SourceWeaver
       ```
 
 This makes the `sourceweaver` command available in your user profile.
