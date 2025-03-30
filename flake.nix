@@ -26,8 +26,8 @@
       rustToolchain = pkgs.rust-bin.stable.latest.default;
 
       # Build the Rust package
-      codescribe-pkg = pkgs.rustPlatform.buildRustPackage {
-        pname = "codescribe";
+      sourceweaver-pkg = pkgs.rustPlatform.buildRustPackage {
+        pname = "sourceweaver";
         version = "0.1.0"; # Match Cargo.toml
 
         src = self; # Use the flake's source tree
@@ -41,11 +41,11 @@
       };
     in {
       # Default package accessible via `nix build .#`
-      packages.default = codescribe-pkg;
+      packages.default = sourceweaver-pkg;
 
       # Allow running directly using `nix run .# -- <args>`
       apps.default = flake-utils.lib.mkApp {
-        drv = codescribe-pkg;
+        drv = sourceweaver-pkg;
       };
 
       devShells.default = pkgs.mkShell {
