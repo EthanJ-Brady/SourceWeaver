@@ -3,15 +3,6 @@
 version = 4
 
 [[package]]
-name = "SourceWeaver"
-version = "0.1.0"
-dependencies = [
- "clap",
- "content_inspector",
- "ignore",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -281,6 +272,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "sourceweaver"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "content_inspector",
+ "ignore",
 ]
 
 [[package]]
