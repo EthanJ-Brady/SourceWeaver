@@ -9,6 +9,7 @@ Source Weaver is a command-line tool that scans a codebase directory, respects `
 - **Language Detection:** Adds language tags (e.g., `rust`, `python`, `javascript`) to Markdown code blocks based on file extensions for syntax highlighting.
 - **Binary File Handling:** Detects binary files and includes a placeholder instead of attempting to render their content.
 - **Hidden File Control:** Ignores hidden files/directories (starting with `.`) by default, but can be configured to include them.
+- **Flexible Output:** Outputs to standard output by default, allowing piping to files or other tools. Can also write directly to a file or copy to the system clipboard.
 - **Cross-Platform:** Built with Rust, runs on Linux, macOS, and Windows.
 - **Nix Flake:** Provides a Nix flake for reproducible builds and development environments.
 
@@ -78,6 +79,8 @@ To permanently add `sourceweaver` to your NixOS or Nix Darwin system configured 
         # Add Source Weaver
         sourceweaver = {
           url = "github:EthanJ-Brady/SourceWeaver";
+          # Optional: Follow nixpkgs input if you want consistency
+          # inputs.nixpkgs.follows = "nixpkgs";
         };
       };
 
@@ -130,22 +133,30 @@ Now, the `sourceweaver` command will be available in your environment.
 
 ## Usage
 
-Run `sourceweaver` from within the root directory of the project you want to process.
+Run `sourceweaver` from within the root directory of the project you want to process. By default, it prints the Markdown output to standard output (stdout).
 
 ```bash
-# Basic usage: Process current directory, output to codebase.md
-sourceweaver
+# Basic usage: Process current directory, print to stdout (pipe to less)
+sourceweaver | less
 
-# Specify output file name
+# Pipe output to a file
+sourceweaver > my_project_bundle.md
+
+# Explicitly specify output file name
 sourceweaver -o my_project_bundle.md
 # or
 sourceweaver --output my_project_bundle.md
+
+# Copy output directly to clipboard
+sourceweaver -c
+# or
+sourceweaver --clipboard
 
 # Specify a different root directory to process
 sourceweaver --root /path/to/another/project -o another_project.md
 
 # Include hidden files (e.g., .envrc, .config files if not ignored)
-sourceweaver --hidden -o project_with_hidden.md
+sourceweaver --hidden -c # Copy with hidden files included
 
 # Get help
 sourceweaver --help
@@ -154,7 +165,11 @@ sourceweaver --help
 
 - `-o, --output <FILE>`
   Sets the output Markdown file path.
-  (Default: `codebase.md`)
+  Writes to the specified file instead of stdout. Cannot be used with `-c/--clipboard`.
+
+- `-c, --clipboard`
+  Copies the output directly to the system clipboard.
+  Cannot be used with `-o/--output`.
 
 - `-r, --root <DIR>`
   Sets the root directory of the codebase to scan.

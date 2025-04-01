@@ -1,4 +1,5 @@
 // src/main.rs
+use arboard::Clipboard;
 use clap::Parser;
 use content_inspector::ContentType;
 use ignore::WalkBuilder;
@@ -12,9 +13,13 @@ use std::{
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The path to the output markdown file.
-    #[arg(short, long, default_value = "codebase.md")]
-    output: PathBuf,
+    /// Optional: The path to the output markdown file. Writes to file instead of stdout.
+    #[arg(short, long, conflicts_with = "clipboard")]
+    output: Option<PathBuf>,
+
+    /// Optional: Copy the output directly to the system clipboard.
+    #[arg(short, long, conflicts_with = "output")]
+    clipboard: bool,
 
     /// Optional: Specify a root directory instead of the current working directory.
     #[arg(short, long)]
@@ -45,44 +50,96 @@ fn main() -> io::Result<()> {
         .root
         .unwrap_or_else(|| std::env::current_dir().expect("Failed to get current directory"));
 
-    println!("Scanning directory: {}", root_dir.display());
-    println!("Outputting to: {}", args.output.display());
+    // Use stderr for status messages to avoid polluting stdout
+    eprintln!("Scanning directory: {}", root_dir.display());
 
-    // Ensure parent directory for output exists before canonicalizing
-    if let Some(parent) = args.output.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
+    if args.clipboard {
+        // Write to an in-memory byte vector first
+        let mut buffer: Vec<u8> = Vec::new();
+        generate_markdown(&mut buffer, &root_dir, args.hidden, None)?;
+
+        // Convert the byte vector to a String
+        let output_string = String::from_utf8(buffer).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Generated content is not valid UTF-8: {}", e),
+            )
+        })?;
+
+        match Clipboard::new() {
+            Ok(mut clipboard) => {
+                // Use the converted string
+                if let Err(e) = clipboard.set_text(output_string) {
+                    eprintln!("Error copying to clipboard: {}", e);
+                    // Convert arboard error to io::Error for consistent return type
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Clipboard error: {}", e),
+                    ));
+                } else {
+                    eprintln!("Output copied to clipboard.");
+                }
+            }
+            Err(e) => {
+                eprintln!("Error initializing clipboard: {}", e);
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Clipboard init error: {}", e),
+                ));
+            }
         }
-    }
+    } else if let Some(output_path) = args.output {
+        eprintln!("Outputting to: {}", output_path.display());
 
-    // Create the output file *first* so we can canonicalize its path
-    // Use a block to ensure the file handle is closed before canonicalization
-    {
-        let _ = File::create(&args.output)?;
-    }
+        // Canonicalization logic for filtering the output file itself
+        let canonical_output_path = if let Some(parent) = output_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+            // Create file first to allow canonicalization
+            File::create(&output_path)?;
+            fs::canonicalize(&output_path).ok() // ok() converts Result to Option
+        } else {
+            // Handle case where output path has no parent (e.g., just "file.md")
+            File::create(&output_path)?;
+            fs::canonicalize(&output_path).ok()
+        };
 
-    // Get the canonical (absolute, symlinks resolved) path of the output file
-    let canonical_output_path = match fs::canonicalize(&args.output) {
-        Ok(path) => Some(path),
-        Err(e) => {
+        if canonical_output_path.is_none() {
             eprintln!(
-                "Warning: Could not canonicalize output path {}: {}. It might be included if inside the scanned directory.",
-                args.output.display(),
-                e
+                "Warning: Could not canonicalize output path {}. It might be included if inside the scanned directory.",
+                output_path.display()
             );
-            None
         }
-    };
 
+        let output_file_handle = File::create(&output_path)?; // Re-open for writing
+        let mut writer = BufWriter::new(output_file_handle);
+        generate_markdown(&mut writer, &root_dir, args.hidden, canonical_output_path)?;
+        eprintln!("Successfully wrote codebase to {}", output_path.display());
+    } else {
+        // Default to stdout
+        let stdout = io::stdout();
+        let mut handle = BufWriter::new(stdout.lock()); // Lock stdout for buffered writing
+        generate_markdown(&mut handle, &root_dir, args.hidden, None)?;
+        handle.flush()?; // Ensure buffer is flushed before program exits
+    }
+
+    Ok(())
+}
+
+// Centralized function to generate the markdown content
+fn generate_markdown<W: Write>(
+    writer: &mut W,
+    root_dir: &Path,
+    hidden: bool,
+    output_path_for_filter: Option<PathBuf>, // Pass canonicalized path if writing to file
+) -> io::Result<()> {
     // Create a HashSet for efficient lock file checking
     let lock_file_set: HashSet<&str> = LOCK_FILES.iter().cloned().collect();
 
-    let output_file_handle = File::create(&args.output)?; // Re-open for writing
-    let mut writer = BufWriter::new(output_file_handle);
-
     // Use WalkBuilder to respect .gitignore, .ignore, etc.
     let walker = WalkBuilder::new(&root_dir)
-        .hidden(!args.hidden)
+        .hidden(!hidden) // Use the passed 'hidden' flag
         .parents(true)
         .git_ignore(true)
         .git_global(true)
@@ -91,7 +148,7 @@ fn main() -> io::Result<()> {
         // Add a filter predicate to explicitly ignore the output file and lock files
         .filter_entry(move |entry| {
             // --- Filter 1: Output File ---
-            if let Some(output_path_to_check) = &canonical_output_path {
+            if let Some(output_path_to_check) = &output_path_for_filter {
                 // Attempt canonicalization for comparison, proceed if it fails
                 if let Ok(entry_path_canonical) = fs::canonicalize(entry.path()) {
                     if entry_path_canonical == *output_path_to_check {
@@ -130,7 +187,7 @@ fn main() -> io::Result<()> {
                         if relative_path.as_os_str().is_empty() {
                             continue;
                         }
-                        process_file(&mut writer, relative_path, path)?;
+                        process_file(writer, relative_path, path)?;
                     } else {
                         eprintln!(
                             "Warning: Could not get relative path for {}",
@@ -143,11 +200,9 @@ fn main() -> io::Result<()> {
         }
     }
 
-    println!("Successfully wrote codebase to {}", args.output.display());
     Ok(())
 }
 
-// process_file and get_language_tag functions remain unchanged
 fn process_file<W: Write>(
     writer: &mut W,
     relative_path: &Path,
