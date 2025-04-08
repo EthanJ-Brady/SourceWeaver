@@ -28,7 +28,7 @@
       # Build the Rust package
       sourceweaver-pkg = pkgs.rustPlatform.buildRustPackage {
         pname = "sourceweaver";
-        version = "0.2.0"; # Match Cargo.toml
+        version = "0.2.1"; # Match Cargo.toml
 
         src = self; # Use the flake's source tree
 
