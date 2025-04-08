@@ -41,6 +41,8 @@ const LOCK_FILES: &[&str] = &[
     "Pipfile.lock",
     "go.sum",
     "flake.lock",
+    "bun.lock",
+    "pnpm-lock.yaml",
 ];
 
 fn main() -> io::Result<()> {
